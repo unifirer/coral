@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/subgentic/coral/internal/cliauth"
+	"github.com/subgentic/coral/internal/clierr"
 	"github.com/subgentic/coral/internal/clitext"
 	"github.com/subgentic/coral/internal/taskcli"
 	"io"
@@ -71,7 +72,7 @@ Output:
 
 Environment:
   CORAL_URL   Server URL (default http://localhost:8420)
-  CORAL_PORT  Server port (overrides CORAL_URL)`
+  CORAL_PORT  Server port (overrides CORAL_URL)` + "\n\n" + clierr.Table
 
 func main() {
 	hooks.InstallIdentity("coral-agent") // the agent session's token, sent with every request (#3387)
@@ -81,7 +82,7 @@ func main() {
 	os.Args, rawOutput = clitext.TakeRaw(os.Args)
 	if len(os.Args) < 2 {
 		printUsage()
-		os.Exit(1)
+		clierr.Exit1()
 	}
 	// Help and option-shaped text are handled before any command runs, so
 	// neither can reach the server or be taken as data.
@@ -97,11 +98,11 @@ func main() {
 	case "bind-codex":
 		if len(os.Args) != 4 {
 			fmt.Fprintln(os.Stderr, "Usage: coral-agent bind-codex <coral-id> <thread-id>")
-			os.Exit(1)
+			clierr.Exit1()
 		}
 		if err := transcriptlink.BindCodex(os.Args[2], os.Args[3]); err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			clierr.Exit1()
 		}
 		fmt.Println("Codex transcript linked")
 	case "ui":
@@ -119,12 +120,12 @@ func main() {
 	case "docs":
 		if err := cmdDocs(os.Args[2:], os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			clierr.Exit1()
 		}
 	case "notify":
 		if err := cmdNotify(os.Args[2:], os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			clierr.Exit1()
 		}
 	case "--help", "-h", "help":
 		printUsage()
@@ -150,14 +151,14 @@ func cmdArtifact(args []string) {
 		path, err := downloadArtifactOpts(serverURL, opts.Positional[0], opts.Values["output"], opts.Bools["force"])
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			clierr.Exit1()
 		}
 		fmt.Println(path)
 		return
 	}
 	if len(args) < 2 || args[0] != "upload" {
 		fmt.Fprintln(os.Stderr, artifactUsageText)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 	opts, err := splitOptions(args[1:], []string{"name", "media-type"}, nil)
 	if err != nil || len(opts.Positional) != 1 {
@@ -176,7 +177,7 @@ func cmdArtifact(args []string) {
 	mediaType := mediatype.Resolve(opts.Values["media-type"], file, name)
 	if err := uploadArtifact(serverURL, file, name, mediaType, resolveSessionID(), os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 }
 
@@ -198,11 +199,13 @@ func uploadArtifact(serverURL, file, name, mediaType, sid string, stdout, stderr
 	if mediaType != "" {
 		req.Header.Set("X-Artifact-Media-Type", mediaType)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	wait := clierr.Timeout(5 * time.Minute) // http.DefaultClient has no timeout: an upload to a server that stopped answering waited for ever
+	resp, err := (&http.Client{Timeout: wait}).Do(req)
 	if err != nil {
-		return err
+		return clierr.CannotReach(hooks.RedactedURL(serverURL), err, wait)
 	}
 	defer resp.Body.Close()
+	clierr.NoteStatus(resp.StatusCode)
 	body, _ := readServer(resp.Body)
 	var reply struct {
 		URI      string `json:"uri"`
@@ -274,7 +277,7 @@ func printTaskUsage() {
 func cmdTask() {
 	if len(os.Args) < 3 {
 		printTaskUsage()
-		os.Exit(1)
+		clierr.Exit1()
 	}
 
 	sub := os.Args[2]
@@ -310,7 +313,7 @@ func cmdTask() {
 		os.Exit(0)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown task subcommand: %s\n", sub)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 }
 
@@ -350,11 +353,11 @@ func cmdLaunch(args []string) {
 	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Invalid directory %s: %v\n", dir, err)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 	if info, err := os.Stat(absDir); err != nil || !info.IsDir() {
 		fmt.Fprintf(os.Stderr, "Not a directory: %s\n", absDir)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 
 	body := map[string]any{"working_dir": absDir}
@@ -372,7 +375,7 @@ func cmdLaunch(args []string) {
 	data, status, err := apiCall("POST", "/api/sessions/launch", body, 60*time.Second)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 	var result map[string]any
 	json.Unmarshal(data, &result)
@@ -385,7 +388,7 @@ func cmdLaunch(args []string) {
 			msg = string(data)
 		}
 		fmt.Fprintf(os.Stderr, "Error launching agent: %s\n", msg)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 
 	// Older servers don't echo agent_type back.
@@ -412,7 +415,7 @@ func resolveSessionID() string {
 	sid := hooks.ResolveSessionID("")
 	if sid == "" {
 		fmt.Fprintln(os.Stderr, "Not inside a Coral agent session (no tmux session name or CORAL_SESSION_NAME).")
-		os.Exit(1)
+		clierr.Exit1()
 	}
 	return sid
 }
@@ -448,7 +451,7 @@ func cmdTaskAdd(args []string) {
 
 	if title == "" {
 		fmt.Fprintln(os.Stderr, `Usage: coral-agent task add "title" [--body "details"] [--priority P]`)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 
 	reqBody := map[string]any{
@@ -463,7 +466,7 @@ func cmdTaskAdd(args []string) {
 		var deps any
 		if err := json.Unmarshal([]byte(*blockedBy), &deps); err != nil {
 			fmt.Fprintln(os.Stderr, "Invalid --blocked-by JSON:", err)
-			os.Exit(1)
+			clierr.Exit1()
 		}
 		reqBody["blocked_by"] = deps
 	}
@@ -478,7 +481,7 @@ func cmdTaskAdd(args []string) {
 		var gates any
 		if err := json.Unmarshal([]byte(*completionGates), &gates); err != nil {
 			fmt.Fprintln(os.Stderr, "Invalid --completion-gates JSON:", err)
-			os.Exit(1)
+			clierr.Exit1()
 		}
 		workflowBody["completion_gates"] = gates
 	}
@@ -487,11 +490,11 @@ func cmdTaskAdd(args []string) {
 	data, status, err := apiCallRaw("POST", "/tasks", reqBody)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 	if status != http.StatusCreated && status != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "Error creating task: %s\n", string(data))
-		os.Exit(1)
+		clierr.Exit1()
 	}
 
 	var task map[string]any
@@ -503,11 +506,11 @@ func cmdTaskList(asJSON bool) {
 	data, statusCode, err := apiCallRaw("GET", "/tasks?session_id="+url.QueryEscape(resolveSessionID()), nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 	if statusCode != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "Error listing tasks: %s\n", string(data))
-		os.Exit(1)
+		clierr.Exit1()
 	}
 
 	var result map[string]any
@@ -552,7 +555,7 @@ func cmdTaskClaim(args ...string) {
 	data, status, err := apiCallRaw("POST", "/tasks/claim", body)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 
 	if status == http.StatusNotFound && isNoTask(data) {
@@ -563,7 +566,7 @@ func cmdTaskClaim(args ...string) {
 	if status != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "Error claiming task: %s\n", string(data))
 		taskcli.PrintBlocked(os.Stderr, data)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 
 	var task map[string]any
@@ -586,7 +589,7 @@ func cmdTaskCurrent(asJSON bool) {
 	data, status, err := apiCallRaw("POST", "/tasks/current", body)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 
 	if status == http.StatusNotFound && isNoTask(data) {
@@ -599,7 +602,7 @@ func cmdTaskCurrent(asJSON bool) {
 	}
 	if status != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", string(data))
-		os.Exit(1)
+		clierr.Exit1()
 	}
 
 	var task map[string]any
@@ -630,13 +633,13 @@ func cmdTaskFinish(args []string, verb string) {
 	}
 	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" || args[0] == "-help" {
 		fmt.Fprintf(os.Stderr, "Usage: coral-agent task %s <id> [--message %s]\n", verb, usageArg)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 
 	taskID, err := strconv.ParseInt(args[0], 10, 64)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Invalid task ID: %s\nUsage: coral-agent task %s <id> [--message %s]\n", args[0], verb, usageArg)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 
 	fs := flag.NewFlagSet("task-"+verb, flag.ExitOnError)
@@ -656,12 +659,12 @@ func cmdTaskFinish(args []string, verb string) {
 			data, err := os.ReadFile(*artifactsFile)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
+				clierr.Exit1()
 			}
 			var artifacts []map[string]any
 			if err := json.Unmarshal(data, &artifacts); err != nil {
 				fmt.Fprintln(os.Stderr, "Invalid artifacts JSON:", err)
-				os.Exit(1)
+				clierr.Exit1()
 			}
 			body["artifacts"] = artifacts
 		}
@@ -673,11 +676,11 @@ func cmdTaskFinish(args []string, verb string) {
 	data, status, err := apiCallRaw("POST", fmt.Sprintf("/tasks/%d/%s", taskID, verb), body)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 	if status != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "Error %s task: %s\n", errWord, string(data))
-		os.Exit(1)
+		clierr.Exit1()
 	}
 
 	var task map[string]any
@@ -701,7 +704,7 @@ func positiveTaskID(arg string) int64 {
 	id, err := strconv.ParseInt(arg, 10, 64)
 	if err != nil || id <= 0 {
 		fmt.Fprintln(os.Stderr, "Task ID must be a positive integer")
-		os.Exit(1)
+		clierr.Exit1()
 	}
 	return id
 }
@@ -710,18 +713,18 @@ func cmdTaskDetail(args []string) {
 	args = withoutFlag(args, "--json") // task detail always prints JSON; --json is accepted so a script can say so
 	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, "Usage: coral-agent task detail <id>")
-		os.Exit(1)
+		clierr.Exit1()
 	}
 	id := positiveTaskID(args[0])
 	data, status, err := apiCallRaw("GET", fmt.Sprintf("/tasks/%d?session_id=%s", id, url.QueryEscape(resolveSessionID())), nil)
 	if err != nil || status != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "Error reading task: %s %v\n", data, err)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 	var pretty bytes.Buffer
 	if err := json.Indent(&pretty, data, "", "  "); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 	fmt.Println(pretty.String())
 }
@@ -729,7 +732,7 @@ func cmdTaskDetail(args []string) {
 func cmdTaskEdit(args []string) {
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "Usage: coral-agent task edit <id> [--title TEXT] [--body TEXT] [--priority P] [--blocked-by JSON]")
-		os.Exit(1)
+		clierr.Exit1()
 	}
 	id := positiveTaskID(args[0])
 	fs := flag.NewFlagSet("task-edit", flag.ExitOnError)
@@ -744,7 +747,7 @@ func cmdTaskEdit(args []string) {
 			var deps any
 			if err := json.Unmarshal([]byte(f.Value.String()), &deps); err != nil {
 				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
+				clierr.Exit1()
 			}
 			body["blocked_by"] = deps
 		} else {
@@ -754,7 +757,7 @@ func cmdTaskEdit(args []string) {
 	data, status, err := apiCallRaw("PATCH", fmt.Sprintf("/tasks/%d", id), body)
 	if err != nil || status != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "Error editing task: %s %v\n", data, err)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 	fmt.Printf("Updated Task #%d\n", id)
 }
@@ -762,13 +765,13 @@ func cmdTaskEdit(args []string) {
 func cmdTaskPublish(args []string) {
 	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, "Usage: coral-agent task publish <id>")
-		os.Exit(1)
+		clierr.Exit1()
 	}
 	id := positiveTaskID(args[0])
 	data, status, err := apiCallRaw("POST", fmt.Sprintf("/tasks/%d/publish", id), map[string]string{"session_id": resolveSessionID()})
 	if err != nil || status != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "Error publishing task: %s %v\n", data, err)
-		os.Exit(1)
+		clierr.Exit1()
 	}
 	fmt.Printf("Published Task #%d\n", id)
 }
@@ -802,12 +805,14 @@ func apiCall(method, path string, body any, timeout time.Duration) ([]byte, int,
 		req.Header.Set("Content-Type", "application/json")
 	}
 
+	timeout = clierr.Timeout(timeout) // CORAL_TIMEOUT, when set, replaces the command's own
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, 0, fmt.Errorf("cannot reach Coral server at %s: %v", hooks.RedactedURL(serverURL), err)
+		return nil, 0, clierr.CannotReach(hooks.RedactedURL(serverURL), err, timeout)
 	}
 	defer resp.Body.Close()
+	clierr.NoteStatus(resp.StatusCode)
 
 	respData, _ := readServer(resp.Body)
 	return respData, resp.StatusCode, nil
