@@ -220,6 +220,11 @@ try {
 
     # ── the MSI: a silent install into scratch, the programs, a version, the uninstall ──
     if ($Msi) {
+        # An x86 package (no `wix build -arch x64`) installs into Program Files (x86): its summary Template says Intel, not x64 (#200).
+        try {
+            $tmpl = (New-Object -ComObject WindowsInstaller.Installer).SummaryInformation((Resolve-Path -LiteralPath $Msi).Path, 0).Property(7)
+            if ($tmpl -like 'x64;*') { Pass "the MSI is an x64 package ($tmpl)" } else { Fail "the MSI is not an x64 package (template [$tmpl]): it would install into Program Files (x86)" }
+        } catch { Fail "could not read the MSI's summary: $($_.Exception.Message)" }
         $msiDir = Join-Path $root 'msi'
         $msiLog = Join-Path $root 'msi-install.log'
         $inst = Start-Process -FilePath 'msiexec.exe' -Wait -PassThru -ArgumentList '/i', "`"$Msi`"", '/qn', '/norestart', "INSTALLFOLDER=`"$msiDir`"", '/l*v', "`"$msiLog`""
