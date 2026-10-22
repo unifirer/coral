@@ -175,10 +175,10 @@ function renderJobDetail(job, runs) {
             <dt>Cleanup Worktree</dt><dd>${job.cleanup_worktree ? 'Yes' : 'No'}</dd>
             ${job.flags ? `<dt>Flags</dt><dd><code>${escapeHtml(job.flags)}</code></dd>` : ''}
         </dl>
-        ${!isWorkflow && job.prompt ? `<div class="sched-prompt-section">
-            <h3>Prompt</h3>
+        ${!isWorkflow && job.prompt ? `<details class="disclosure sched-prompt-section">
+            <summary>Prompt</summary>
             <pre class="sched-prompt">${escapeHtml(job.prompt)}</pre>
-        </div>` : ''}
+        </details>` : ''}
         <div class="sched-runs-section">
             <h3>Run History</h3>
             ${runsHtml}
@@ -312,7 +312,7 @@ export function showJobModal() {
     ensureBuilt('job-modal'); // built on first open (#4500)
     editingJobId = null;
     openedJob = null;
-    document.getElementById('job-modal-title').textContent = 'New Scheduled Job';
+    document.getElementById('job-modal-title').textContent = 'Scheduled job';
     document.getElementById('job-modal-submit').textContent = 'Create Job';
     document.getElementById('job-modal').style.display = 'flex';
     document.getElementById('job-modal-name').value = '';
@@ -347,7 +347,7 @@ export async function editScheduledJob(jobId) {
 
     editingJobId = jobId;
     ensureBuilt('job-modal');
-    document.getElementById('job-modal-title').textContent = 'Edit Scheduled Job';
+    document.getElementById('job-modal-title').textContent = 'Edit job';
     document.getElementById('job-modal-submit').textContent = 'Save Changes';
     document.getElementById('job-modal').style.display = 'flex';
     document.getElementById('job-modal-name').value = job.name;
