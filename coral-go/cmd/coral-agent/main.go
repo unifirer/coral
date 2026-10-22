@@ -294,7 +294,7 @@ func cmdTask() {
 	case "claim":
 		cmdTaskClaim(taskArgs...)
 	case "current":
-		cmdTaskCurrent()
+		cmdTaskCurrent(hasFlag(taskArgs, "--json"))
 	case "detail":
 		cmdTaskDetail(taskArgs)
 	case "edit":
@@ -579,7 +579,8 @@ func cmdTaskClaim(args ...string) {
 	}
 }
 
-func cmdTaskCurrent() {
+// cmdTaskCurrent prints the task in progress; with asJSON the task as JSON, or null when there is none.
+func cmdTaskCurrent(asJSON bool) {
 	body := map[string]string{"session_id": resolveSessionID()}
 
 	data, status, err := apiCallRaw("POST", "/tasks/current", body)
@@ -589,6 +590,10 @@ func cmdTaskCurrent() {
 	}
 
 	if status == http.StatusNotFound && isNoTask(data) {
+		if asJSON {
+			fmt.Println("null")
+			return
+		}
 		fmt.Println("No active task")
 		return
 	}
@@ -599,6 +604,11 @@ func cmdTaskCurrent() {
 
 	var task map[string]any
 	json.Unmarshal(data, &task)
+	if asJSON {
+		pretty, _ := json.MarshalIndent(task, "", "  ")
+		fmt.Println(string(pretty))
+		return
+	}
 	id, _ := task["id"].(float64)
 	title, _ := task["title"].(string)
 	taskBody, _ := task["body"].(string)
