@@ -13,6 +13,9 @@ export async function showCreateTaskModal() {
     const modal = ensureBuilt('create-task-modal'); // built on first open (#4500)
     if (!modal) return;
 
+    // A fresh task starts with its optional workflow controls folded.
+    modal.querySelector('.task-workflow-options')?.removeAttribute('open');
+
     // Reset form
     document.getElementById('create-task-title').value = '';
     document.getElementById('create-task-body').value = '';

@@ -4552,3 +4552,8 @@ a.ibx-open, a.ibx-open:visited { color: var(--link-text); }
 /* The Not Found dialog's Check again answer (#5835): a live region that is always there and only gets its text, so it is announced; empty, it takes no room. */
 .cli-recheck-status { color: var(--text-secondary); font-size: 0.8125rem; line-height: 1.5; margin: 0; }
 .cli-recheck-status:not(:empty) { margin-top: 10px; }
+
+.task-workflow-options > summary { display: flex; align-items: center; gap: 4px; list-style: none; }
+.task-workflow-options > summary::-webkit-details-marker { display: none; }
+.task-workflow-options > summary::before { content: '▸' / ''; }
+.task-workflow-options[open] > summary::before { content: '▾' / ''; }
